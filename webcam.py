@@ -16,18 +16,7 @@ PRESERVE_COLOR = False
 WIDTH = 1280
 HEIGHT = 720
 
-class Style:
-    def __init__(self,title,path,artist=None):
-        self.title = title
-        self.artist = artist
-        self.path = path
-        
-    def __str__(self):
-        style_str = '"{}"'.format(self.title)
-        if self.artist:
-            style_str = "{0} by {1}".format(style_str,self.artist)
-        return '{0} ({1})'.format(style_str,self.path)
-
+from style import Style
 def webcam(styles, current_style, width=1280, height=720):
     """
     Captures and saves an image, perform style transfer, and again saves the styled image.
@@ -105,25 +94,34 @@ def show_options(options, first=1, prompt="Selection: ", validate_type=False,val
             print("Invalid choice {0}.".format(response))
     return response
 
+def get_styles(styles_dir):
+    styles = []
+    for style_dir in os.listdir(styles_dir):
+        style_dir_path = os.path.join(styles_dir,style_dir)
+        if os.path.isdir(style_dir_path):
+            style_dict = None
+            try:
+                with open(os.path.join(style_dir_path,"style.yml"),"r") as style_file:
+                    style_contents = style_file.read()
+                style_dict = yaml.load(style_contents,Loader=yaml.Loader)
+                #print(str(styles[-1]))
+            except FileNotFoundError:
+                print("bad dir")                
+            if style_dict:
+                thumb_path = os.path.join(style_dir_path,"thumb.png")
+                if os.path.exists(thumb_path):
+                    style_dict["thumb"] = thumb_path
+                styles.append(Style(**style_dict,path=os.path.join(style_dir_path,"{}.pth".format(style_dir))))
+    return styles
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-c","--camera",type=int,default=0)
     parser.add_argument("-S","--styles-dir",default=os.path.join(os.path.dirname(os.path.realpath(__file__)),"transforms"))
     args = parser.parse_args()
     #print(args.styles_dir)
-    styles = []
-    for style_dir in os.listdir(args.styles_dir):
-        style_dir_path = os.path.join(args.styles_dir,style_dir)
-        if os.path.isdir(style_dir_path):
-            try:
-                with open(os.path.join(style_dir_path,"style.yml"),"r") as style_file:
-                    style_contents = style_file.read()
-                style_dict = yaml.load(style_contents,Loader=yaml.Loader)
-                styles.append(Style(**style_dict,path=os.path.join(style_dir_path,"{}.pth".format(style_dir))))
-                print(str(styles[-1]))
-            except FileNotFoundError:
-                print("bad dir")
     #sys.exit(0)
+    stykes = get_styles(args.styles_dir)
     current_style = multiprocessing.Value('i',0)
     job = multiprocessing.Process(target=webcam,args=(styles,current_style,WIDTH,HEIGHT,))
     job.start()
