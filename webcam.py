@@ -5,25 +5,40 @@ import transformer
 import torch
 import utils
 
+import numpy as np
+
 import sys
 
 import multiprocessing
 
 import yaml
 
+from style_picker import StylePicker
+from style_button import StyleButton
+
+from PyQt5.QtWidgets import *
+
+from screeninfo import get_monitors
+
 STYLE_TRANSFORM_PATH = "transforms/mosaic.pth"
 PRESERVE_COLOR = False
 WIDTH = 1280
 HEIGHT = 720
 
+def save_img(out_path, img):
+    img = np.clip(img, 0, 255).astype(np.uint8)
+    imwrite(out_path, img)
+
 from style import Style
-def webcam(styles, current_style, width=1280, height=720):
+def webcam(styles, current_style, width=1280, height=720, cam_num=0, cam_screen=None):
     """
     Captures and saves an image, perform style transfer, and again saves the styled image.
     Reads the styled image and show in window. 
     """
     # Device
     device = ("cuda" if torch.cuda.is_available() else "cpu")
+    
+    snap_number = 0
     
     style_nets = []
 
@@ -37,11 +52,14 @@ def webcam(styles, current_style, width=1280, height=720):
     #print("Done Loading Transformer Networks")
 
     # Set webcam settings
-    cam = cv2.VideoCapture(0)
+    cam = cv2.VideoCapture(cv2.CAP_DSHOW+cam_num)
     cam.set(3, width)
     cam.set(4, height)
 
     cv2.namedWindow("style")
+    if cam_screen:
+        monitors = get_monitors()
+        cv2.moveWindow("style",monitors[cam_screen].x,0)
     # Main loop
     with torch.no_grad():
         while True:
@@ -62,13 +80,21 @@ def webcam(styles, current_style, width=1280, height=720):
                 generated_image = utils.transfer_color(img, generated_image)
 
             generated_image = generated_image / 255
+            generated_image = cv2.resize(generated_image,(1920,1080))
             
             cv2.setWindowTitle('style',styles[current_style.value].title)
 
+
+            k = cv2.waitKey(1)
+            if k == 27: 
+                break  # esc to quit
+            elif k % 256 == 32:
+                cv2.imwrite("snapshot{0}.png".format(snap_number),255*generated_image)
+                snap_number = snap_number + 1
+                
             # Show webcam
             cv2.imshow('style', generated_image)
-            if cv2.waitKey(1) == 27: 
-                break  # esc to quit
+
             
     # Free-up memories
     cam.release()
@@ -113,28 +139,54 @@ def get_styles(styles_dir):
                     style_dict["thumb"] = thumb_path
                 styles.append(Style(**style_dict,path=os.path.join(style_dir_path,"{}.pth".format(style_dir))))
     return styles
+    
+def set_current_style(current_style, value):
+    current_style.value = value
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-c","--camera",type=int,default=0)
     parser.add_argument("-S","--styles-dir",default=os.path.join(os.path.dirname(os.path.realpath(__file__)),"transforms"))
+    parser.add_argument("-g","--gui",action='store_true')
+    parser.add_argument("-m","--maximize",action='store_true')
+    parser.add_argument("-C","--camera-screen",type=int)
+    parser.add_argument("-P","--picker-screen",type=int)
     args = parser.parse_args()
     #print(args.styles_dir)
     #sys.exit(0)
-    stykes = get_styles(args.styles_dir)
+    styles = get_styles(args.styles_dir)
     current_style = multiprocessing.Value('i',0)
-    job = multiprocessing.Process(target=webcam,args=(styles,current_style,WIDTH,HEIGHT,))
+    job = multiprocessing.Process(target=webcam,args=(styles,current_style,WIDTH,HEIGHT,args.camera,args.camera_screen))
     job.start()
-    style_options = [s.title for s in styles]
-    while True:
-        print("Source style")
-        style_index = show_options(style_options,validate_type=True)
-        if style_index == 0:
-            if job:
-                job.terminate()
-            break
-        elif style_index >= 1 and style_index <= len(styles):
-            current_style.value = style_index - 1
-        else:
-            print("Invalid choice {0}.".format(style_index))
+    if args.gui:
+        # GUI
+        app = QApplication([])
+        if not args.maximize:
+            StyleButton.default_size = (250,250)
+        picker = StylePicker(styles)
+        picker.style_picked.connect(lambda s, picked=current_style: set_current_style(picked, s))
+        picker.show()
+        picker.resize(1200,700)
+        if args.picker_screen:
+            monitors = get_monitors()
+            picker.move(monitors[args.picker_screen].x,0)
+        if args.maximize:
+            picker.showMaximized()
+        app.exec_()
+        job.terminate()
+    else:
+        # Terminal text interface.
+        style_options = [s.title for s in styles]
+        while True:
+            print("Source style")
+            # Style index represents ...
+            style_index = show_options(style_options,validate_type=True)
+            if style_index == 0:
+                if job:
+                    job.terminate()
+                break
+            elif style_index >= 1 and style_index <= len(styles):
+                current_style.value = style_index - 1
+            else:
+                print("Invalid choice {0}.".format(style_index))
     #webcam(STYLE_TRANSFORM_PATH, WIDTH, HEIGHT)
